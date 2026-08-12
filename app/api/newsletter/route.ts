@@ -1,0 +1,4 @@
+import { env } from "cloudflare:workers";
+async function ready() { await env.DB.prepare(`CREATE TABLE IF NOT EXISTS newsletter_subscribers (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL)`).run(); }
+export async function POST(request: Request) { const { email } = await request.json() as { email?: string }; if (!email || !/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Valid email required" }, { status: 400 }); await ready(); await env.DB.prepare("INSERT OR IGNORE INTO newsletter_subscribers (email,created_at) VALUES (?,?)").bind(email.toLowerCase(),Date.now()).run(); return Response.json({ ok:true }, { status:201 }); }
+export async function GET() { await ready(); const result=await env.DB.prepare("SELECT * FROM newsletter_subscribers ORDER BY created_at DESC").all(); return Response.json(result.results); }
