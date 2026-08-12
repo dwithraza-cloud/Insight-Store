@@ -8,8 +8,9 @@
 @media(max-width:420px){.logo-btn{width:105px}.logo-btn img{width:105px}.nav-actions{gap:10px}.nav-actions button{font-size:17px}.category-grid{grid-template-columns:1fr 1fr}.category-grid button{padding:11px}.product-grid,.shop-grid{grid-template-columns:1fr 1fr}.product-image,.shop-grid .product-image{height:155px}.product-card>small{margin-top:10px}.product-title{font-size:13px}.price b{font-size:14px}.price del{display:none}.hero h1{font-size:37px}.hero-copy>div{flex-direction:column;align-items:flex-start}.contact-main form{padding:24px}.admin-stats{grid-template-columns:1fr}.benefits .wrap{grid-template-columns:1fr}.benefits .wrap>div:last-child{grid-column:auto}.footer-grid{grid-template-columns:1fr 1fr}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
-/* Nexmart-inspired DM Sans typography system */
-html,body,.site-shell,.admin,.site-shell button,.site-shell input,.site-shell select,.site-shell textarea{font-family:var(--font-dm-sans),'DM Sans',sans-serif}
+/* Poppins display + Roboto reading typography system */
+html,body,.site-shell,.admin,.site-shell input,.site-shell select,.site-shell textarea{font-family:var(--font-roboto),'Roboto',sans-serif}
+.site-shell button,.admin button,h1,h2,h3,h4,h5,h6,.product-title,.category-grid b,.price,.detail-price,.footer-links h3,.newsletter h3{font-family:var(--font-poppins),'Poppins',sans-serif}
 body{font-weight:400;line-height:1.6;color:#222}
 h1,h2,.hero h1,.page-title,.detail-copy h1,.article h1,.about-top h1,.watch-banner h2,.experience h2{font-weight:700;letter-spacing:-.02em;line-height:1.15}
 h3,h4,.product-title,.blog-card h3,.category-grid b,.testimonials b,.footer-links h3,.newsletter h3{font-weight:600;letter-spacing:-.01em;line-height:1.3}
