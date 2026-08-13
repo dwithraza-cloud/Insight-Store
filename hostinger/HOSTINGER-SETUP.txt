@@ -8,8 +8,8 @@ INSIGHT STORE - HOSTINGER NODE.JS SETUP
 3. Set the start command to:
    npm start
 
-4. Run dependency installation from Hostinger:
-   npm install --omit=dev
+4. No build command is required. This package has no third-party runtime
+   dependencies. Hostinger may still run npm install; it will finish quickly.
 
 5. Add environment variable:
    ADMIN_PASSWORD = a strong private password
@@ -32,7 +32,8 @@ INSIGHT STORE - HOSTINGER NODE.JS SETUP
 - Node.js 22+
 - Application root points to the extracted ZIP root
 - Start command is npm start
-- npm install --omit=dev completed successfully
+- Build command is blank / disabled
+- Hostinger starts the app with npm start
 - Do not upload local node_modules
 - Do not override Hostinger's PORT variable
 - storage/ is writable
