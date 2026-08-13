@@ -81,6 +81,21 @@ async function ensureSchema() {
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS store_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, city TEXT NOT NULL, postal_code TEXT, address TEXT NOT NULL, subtotal REAL NOT NULL, shipping REAL NOT NULL, tax REAL NOT NULL, total REAL NOT NULL, payment_method TEXT NOT NULL, payment_status TEXT NOT NULL, order_status TEXT NOT NULL, transaction_reference TEXT NOT NULL, proof_url TEXT NOT NULL, admin_note TEXT, verified_by TEXT, verified_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS order_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, product_id INTEGER NOT NULL, title TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL, image TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS contact_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'New',
+      created_at INTEGER NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    )`),
   ]);
   for (const statement of [
     "ALTER TABLE catalog_products ADD COLUMN image_2 TEXT",
