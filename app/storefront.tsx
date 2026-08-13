@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import AdminPanel from "./admin-panel";
 import {
   ArrowLeft, ArrowLeftRight, ArrowRight, BadgeCheck, Bell, Box, Camera,
   Check, ChevronLeft, ChevronRight, CircleUserRound, CreditCard, Eye,
@@ -19,7 +20,7 @@ const Youtube = Headphones;
 type Product = {
   id: number; title: string; category: string; brand: string; price: number;
   oldPrice?: number; rating: number; stock: boolean; image: string; badge?: string;
-  sku: string; color: string; screen?: string; description: string;
+  sku: string; color: string; screen?: string; description: string; images?: string[]; videoUrl?: string;
 };
 
 const products: Product[] = [
@@ -90,6 +91,7 @@ export default function Storefront({ initialPath }: { initialPath: string }) {
   const [toast, setToast] = useState("");
   const [quick, setQuick] = useState<Product | null>(null);
   const [mobile, setMobile] = useState(false);
+  const [, setCatalogueVersion] = useState(0);
 
   useEffect(() => {
     try {
@@ -97,6 +99,14 @@ export default function Storefront({ initialPath }: { initialPath: string }) {
       setWishlist(JSON.parse(localStorage.getItem("is-wishlist") || "[]"));
       setCompare(JSON.parse(localStorage.getItem("is-compare") || "[]"));
     } catch {}
+  }, []);
+  useEffect(() => {
+    fetch("/api/products", { cache:"no-store" }).then(r=>r.json()).then(data=>{
+      if(Array.isArray(data.items)&&data.items.length){
+        products.splice(0,products.length,...data.items);
+        setCatalogueVersion(v=>v+1);
+      }
+    }).catch(()=>{});
   }, []);
   useEffect(() => { localStorage.setItem("is-cart", JSON.stringify(cart)); }, [cart]);
   useEffect(() => { localStorage.setItem("is-wishlist", JSON.stringify(wishlist)); }, [wishlist]);
@@ -188,7 +198,7 @@ function SectionHead({ title, action, onClick }: any) { return <div className="s
 function ProductSection(props: any) { return <section className="wrap section"><SectionHead title={props.title} action="View all" onClick={() => props.go("/shop")} /><div className="product-grid">{props.list.map((p: Product) => <ProductCard key={p.id} p={p} {...props} />)}</div></section>; }
 
 function ProductCard({ p, go, addCart, toggle, setQuick, wishlist, compare }: any) {
-  return <article className="product-card"><div className="product-image">{p.badge && <em className={p.badge === "HOT" ? "hot" : ""}>{p.badge}</em>}<img src={p.image} alt={p.title} /><div className="card-actions"><button className={wishlist.includes(p.id)?"selected":""} onClick={() => toggle("wishlist", p.id)} aria-label="Wishlist"><Heart size={17} fill={wishlist.includes(p.id)?"currentColor":"none"}/></button><button className={compare.includes(p.id)?"selected":""} onClick={() => toggle("compare", p.id)} aria-label="Compare">{compare.includes(p.id)?<Check size={17}/>:<ArrowLeftRight size={17}/>}</button><button onClick={() => setQuick(p)} aria-label="Quick view"><Eye size={17}/></button></div></div><small>{p.category}</small><button className="product-title" onClick={() => go(`/product/${p.id}`)}>{p.title}</button><div className="price"><b>{money(p.price)}</b>{p.oldPrice && <del>{money(p.oldPrice)}</del>}</div><div className="rating">★★★★★ <span>({p.rating})</span></div><button className="add-btn" disabled={!p.stock} onClick={() => addCart(p.id)}>{p.stock ? "Add to cart" : "Out of stock"}</button></article>;
+  return <article className="product-card"><div className="product-image product-open" role="button" tabIndex={0} onClick={() => setQuick(p)} onKeyDown={e=>(e.key==="Enter"||e.key===" ")&&setQuick(p)} aria-label={`View ${p.title}`}>{p.badge && <em className={p.badge === "HOT" ? "hot" : ""}>{p.badge}</em>}<img src={p.image} alt={p.title} /><div className="card-actions" onClick={e=>e.stopPropagation()}><button className={wishlist.includes(p.id)?"selected":""} onClick={() => toggle("wishlist", p.id)} aria-label="Wishlist"><Heart size={17} fill={wishlist.includes(p.id)?"currentColor":"none"}/></button><button className={compare.includes(p.id)?"selected":""} onClick={() => toggle("compare", p.id)} aria-label="Compare">{compare.includes(p.id)?<Check size={17}/>:<ArrowLeftRight size={17}/>}</button><button onClick={() => setQuick(p)} aria-label="Quick view"><Eye size={17}/></button></div></div><small>{p.category}</small><button className="product-title" onClick={() => setQuick(p)}>{p.title}</button><div className="price"><b>{money(p.price)}</b>{p.oldPrice && <del>{money(p.oldPrice)}</del>}</div><div className="rating">★★★★★ <span>({p.rating})</span></div><button className="add-btn" disabled={!p.stock} onClick={() => addCart(p.id)}>{p.stock ? "Add to cart" : "Out of stock"}</button></article>;
 }
 
 function Shop({ path, go, addCart, toggle, setQuick, wishlist, compare }: any) {
@@ -231,10 +241,14 @@ function Compare({ ids, addCart }: any) { const list=products.filter(p=>ids.incl
 
 function Account({ go }: any) { return <div className="wrap page account"><aside><h3>My account</h3>{[["Overview","/account"],["Orders","/account/orders"],["Profile","/account/profile"],["Addresses","/account/addresses"],["Wishlist","/wishlist"]].map(x=><button key={x[0]} onClick={()=>go(x[1])}>{x[0]}<span>›</span></button>)}<button onClick={()=>go("/")}>Log out</button></aside><section><span className="eyebrow">WELCOME BACK</span><h1>Account overview</h1><div className="account-stats"><article><b>3</b><span>Total orders</span></article><article><b>1</b><span>In progress</span></article><article><b>{money(252997)}</b><span>Total spent</span></article></div><h2>Recent orders</h2><div className="order-row"><b>#IS-10428</b><span>12 Aug 2026</span><span className="pill">Processing</span><b>{money(92999)}</b></div><div className="order-row"><b>#IS-10387</b><span>29 Jul 2026</span><span className="pill delivered">Delivered</span><b>{money(24999)}</b></div></section></div>; }
 
-function Admin({ setToast }: any) { const [view,setView]=useState("Dashboard"); const [rows,setRows]=useState(products); return <div className="admin"><aside><img src="/insight-store-logo.png" alt="Insight Store"/><small>STORE ADMIN</small>{["Dashboard","Products","Orders","Customers","Categories","Brands","Coupons","Blog","Messages","Newsletter","Settings"].map(x=><button className={view===x?"active":""} key={x} onClick={()=>setView(x)}>{x}<span>›</span></button>)}<a href="/">View storefront ↗</a></aside><main><header><div><small>INSIGHT STORE</small><h1>{view}</h1></div><button onClick={()=>setToast("Notifications are up to date")}>🔔</button><b>Admin User</b></header>{view==="Dashboard"?<><div className="admin-stats">{[["Total revenue",money(2845000),"+12.8%"],["Orders","1,284","+8.2%"],["Customers","3,902","+18.4%"],["Low stock","6","Review"]].map(x=><article key={x[0]}><span>{x[0]}</span><b>{x[1]}</b><small>{x[2]}</small></article>)}</div><div className="chart-card"><h2>Revenue overview</h2><div className="bars">{[42,58,48,76,63,82,71,93,86,98,88,100].map((h,i)=><i key={i} style={{height:`${h}%`}}><span>{["Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug"][i]}</span></i>)}</div></div><AdminOrders/></>:view==="Products"?<section className="admin-table"><div><h2>Product catalogue</h2><button className="primary" onClick={()=>setToast("New product editor opened")}>+ Add product</button></div><table><thead><tr><th>Product</th><th>SKU</th><th>Price</th><th>Stock</th><th></th></tr></thead><tbody>{rows.map(p=><tr key={p.id}><td><img src={p.image} alt=""/><b>{p.title}</b></td><td>{p.sku}</td><td>{money(p.price)}</td><td><span className={p.stock?"green":"red"}>{p.stock?"In stock":"Out"}</span></td><td><button onClick={()=>setToast(`Editing ${p.title}`)}>Edit</button><button onClick={()=>setRows(r=>r.filter(x=>x.id!==p.id))}>Delete</button></td></tr>)}</tbody></table></section>:<section className="admin-placeholder"><h2>{view} management</h2><p>Search, create, update and organize {view.toLowerCase()} from this workspace.</p><button className="primary" onClick={()=>setToast(`${view} record created`)}>Create new</button><AdminOrders/></section>}</main></div>; }
-function AdminOrders(){return <section className="admin-table"><div><h2>Recent orders</h2><button>View all</button></div><table><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>{[["#IS-10428","Areeba Khan",92999,"Processing"],["#IS-10427","Hamza Ali",184999,"Confirmed"],["#IS-10426","Sara Ahmed",24999,"Delivered"]].map(x=><tr key={x[0] as string}><td><b>{x[0]}</b></td><td>{x[1]}</td><td>{money(x[2] as number)}</td><td><span className="pill">{x[3]}</span></td></tr>)}</tbody></table></section>}
+function Admin({ setToast }: any) { return <AdminPanel seedProducts={products} setToast={setToast}/>; }
 
-function QuickView({ product:p, close, addCart }: any) { const [qty,setQty]=useState(1); return <div className="modal-backdrop" onMouseDown={close}><div className="quick-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true"><button className="modal-close icon-button" aria-label="Close quick view" onClick={close}><X/></button><img src={p.image} alt={p.title}/><div><small>{p.category}</small><h2>{p.title}</h2><div className="rating">★★★★★ <span>{p.rating}</span></div><div className="detail-price">{money(p.price)}</div><p>{p.description}</p><div className="buy-row"><div className="qty"><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><b>{qty}</b><button onClick={()=>setQty(qty+1)}>+</button></div><button className="primary" onClick={()=>{addCart(p.id,qty);close();}}>Add to cart</button></div></div></div></div>; }
+function QuickView({ product:p, close, addCart }: any) {
+  const [qty,setQty]=useState(1);
+  const [active,setActive]=useState(0);
+  const media=(p.images?.filter(Boolean)?.length?p.images:[p.image,p.image,p.image]).slice(0,3);
+  return <div className="modal-backdrop product-popup-backdrop" onMouseDown={close}><div className="quick-modal product-popup" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label={p.title}><button className="modal-close icon-button" aria-label="Close product" onClick={close}><X/></button><div className="popup-gallery"><div className="popup-main-media">{p.videoUrl&&active===media.length?<video src={p.videoUrl} controls playsInline/>:<img src={media[active]||p.image} alt={p.title}/>}</div><div className="popup-thumbs">{media.map((src:string,i:number)=><button key={i} className={active===i?"active":""} onClick={()=>setActive(i)}><img src={src} alt={`${p.title} view ${i+1}`}/></button>)}{p.videoUrl&&<button className={active===media.length?"active video-thumb": "video-thumb"} onClick={()=>setActive(media.length)}>▶<span>Video</span></button>}</div></div><div className="popup-copy"><small>{p.category} · {p.brand}</small><h2>{p.title}</h2><div className="rating">★★★★★ <span>{p.rating} verified rating</span></div><div className="detail-price">{money(p.price)} {p.oldPrice&&<del>{money(p.oldPrice)}</del>}</div><p>{p.description}</p><dl><div><dt>SKU</dt><dd>{p.sku}</dd></div><div><dt>Availability</dt><dd className={p.stock?"green":"red"}>{p.stock?"In stock":"Out of stock"}</dd></div><div><dt>Delivery</dt><dd>2–4 business days</dd></div></dl><div className="buy-row"><div className="qty"><button onClick={()=>setQty(Math.max(1,qty-1))}>−</button><b>{qty}</b><button onClick={()=>setQty(qty+1)}>+</button></div><button className="primary" onClick={()=>addCart(p.id,qty)}>Add to cart</button></div><div className="popup-actions"><button onClick={close}>Continue shopping</button><button className="primary" onClick={()=>{addCart(p.id,qty);close();location.href="/cart"}}>View cart</button></div></div></div></div>;
+}
 function Breadcrumb({items}:any){return <div className="breadcrumb">{items.map((x:string,i:number)=><span key={x}>{i>0&&" / "}{x}</span>)}</div>}
 function Empty({title,text,action}:any){return <div className="empty"><div><PackageOpen/></div><h2>{title}</h2><p>{text}</p>{action&&<button className="primary" onClick={action}>Browse products <ArrowRight size={17}/></button>}</div>}
 function NotFound({go}:any){return <div className="not-found"><div className="lost-mark">4<span><Search/></span>4</div><h1>Oops! That page can not be found.</h1><p>The page may have moved, but the best of Insight Store is still right here.</p><button onClick={()=>history.back()}><ArrowLeft size={17}/> Go back</button><button className="primary" onClick={()=>go("/")}>Go to homepage</button></div>}
