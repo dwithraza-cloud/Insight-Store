@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 
-type AdminEntity = "products" | "orders" | "customers" | "categories" | "brands" | "coupons" | "blog" | "messages" | "newsletter" | "settings";
+type AdminEntity = "products" | "orders" | "payments" | "customers" | "categories" | "brands" | "coupons" | "blog" | "messages" | "newsletter" | "settings";
 
-const allowed = new Set<AdminEntity>(["products","orders","customers","categories","brands","coupons","blog","messages","newsletter","settings"]);
+const allowed = new Set<AdminEntity>(["products","orders","payments","customers","categories","brands","coupons","blog","messages","newsletter","settings"]);
 
 function json(data: unknown, status = 200) {
   return Response.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -79,6 +79,8 @@ async function ensureSchema() {
       metadata_json TEXT,
       created_at INTEGER NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS store_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, city TEXT NOT NULL, postal_code TEXT, address TEXT NOT NULL, subtotal REAL NOT NULL, shipping REAL NOT NULL, tax REAL NOT NULL, total REAL NOT NULL, payment_method TEXT NOT NULL, payment_status TEXT NOT NULL, order_status TEXT NOT NULL, transaction_reference TEXT NOT NULL, proof_url TEXT NOT NULL, admin_note TEXT, verified_by TEXT, verified_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS order_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, product_id INTEGER NOT NULL, title TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL, image TEXT)`),
   ]);
   for (const statement of [
     "ALTER TABLE catalog_products ADD COLUMN image_2 TEXT",
@@ -147,6 +149,15 @@ export async function GET(request: Request) {
       : await env.DB.prepare("SELECT * FROM catalog_products ORDER BY updated_at DESC LIMIT 250").all();
     return json({ items: rows.results, admin });
   }
+  if (entity === "orders" || entity === "payments") {
+    const rows=await env.DB.prepare("SELECT * FROM store_orders ORDER BY created_at DESC LIMIT 250").all<any>();
+    const hydrated=[];
+    for(const row of rows.results){
+      const lines=await env.DB.prepare("SELECT * FROM order_items WHERE order_id=?").bind(row.id).all();
+      hydrated.push({...row,items:lines.results});
+    }
+    return json({items:hydrated,admin});
+  }
   if (entity === "messages") {
     const rows = await env.DB.prepare("SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT 250").all();
     return json({ items: rows.results, admin });
@@ -195,6 +206,15 @@ export async function POST(request: Request) {
         .bind(p.source_id,p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.color,now,now).run();
       await audit(String(admin.authenticated_user_id), "create", entity, result.meta.last_row_id, `Created product ${p.title}`);
       return json({ id: result.meta.last_row_id }, 201);
+    }
+    if (entity === "orders" || entity === "payments") {
+      const paymentStatus=String(body.payment_status||"");
+      if(!["Verification Pending","Paid","Payment Rejected"].includes(paymentStatus))throw new Error("Invalid payment status.");
+      const orderStatus=paymentStatus==="Paid"?"Order Confirmed":paymentStatus==="Payment Rejected"?"Payment Pending":"Payment Pending";
+      await env.DB.prepare("UPDATE store_orders SET payment_status=?,order_status=?,admin_note=?,verified_by=?,verified_at=?,updated_at=? WHERE id=?")
+        .bind(paymentStatus,orderStatus,String(body.admin_note||"").slice(0,1000),String(admin.authenticated_user_id),Date.now(),now,id).run();
+      await audit(String(admin.authenticated_user_id),paymentStatus==="Paid"?"approve":"reject","payment",id,`${paymentStatus} for order ${id}`);
+      return json({ok:true});
     }
     if (entity === "settings") {
       if (!body.key) throw new Error("Setting key is required.");
@@ -255,6 +275,7 @@ export async function DELETE(request: Request) {
   const id = url.searchParams.get("id");
   if (!id || !allowed.has(entity)) return json({ error: "Entity and id are required" },400);
   if (entity === "products") await env.DB.prepare("DELETE FROM catalog_products WHERE id=?").bind(id).run();
+  else if (entity === "orders" || entity === "payments") return json({error:"Orders and payment records cannot be deleted."},405);
   else if (entity === "messages") await env.DB.prepare("DELETE FROM contact_messages WHERE id=?").bind(id).run();
   else if (entity === "newsletter") await env.DB.prepare("DELETE FROM newsletter_subscribers WHERE id=?").bind(id).run();
   else await env.DB.prepare("DELETE FROM admin_records WHERE id=? AND entity=?").bind(id,entity).run();

@@ -1,0 +1,2 @@
+import { env } from "cloudflare:workers";
+export async function GET(){try{const row=await env.DB.prepare("SELECT value_json FROM store_settings WHERE key='general'").first<any>();const value=row?.value_json?JSON.parse(row.value_json):{};return Response.json({clientId:value.google_drive_client_id||"",apiKey:value.google_drive_api_key||""},{headers:{"cache-control":"no-store"}})}catch{return Response.json({clientId:"",apiKey:""})}}
