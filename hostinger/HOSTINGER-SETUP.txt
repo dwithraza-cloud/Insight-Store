@@ -1,0 +1,42 @@
+INSIGHT STORE - HOSTINGER NODE.JS SETUP
+
+1. Extract the ZIP directly into your Hostinger Node.js application root.
+   package.json and server.mjs must be at the application root, not inside an extra folder.
+
+2. In Hostinger Node.js settings select Node.js 22 or newer.
+
+3. Set the start command to:
+   npm start
+
+4. Run dependency installation from Hostinger:
+   npm install --omit=dev
+
+5. Add environment variable:
+   ADMIN_PASSWORD = a strong private password
+
+   Do not set PORT manually. Hostinger supplies it automatically.
+
+6. Ensure the storage folder is writable by the Node.js application.
+   Uploaded media and the JSON database persist inside storage/.
+
+7. Restart the Node.js application. Test:
+   /api/health
+   It should return {"ok":true,...}
+
+8. Admin URL:
+   /admin
+   The browser will ask for Basic Authentication. Username may be anything;
+   use ADMIN_PASSWORD as the password.
+
+503 PREVENTION CHECKLIST
+- Node.js 22+
+- Application root points to the extracted ZIP root
+- Start command is npm start
+- npm install --omit=dev completed successfully
+- Do not upload local node_modules
+- Do not override Hostinger's PORT variable
+- storage/ is writable
+- Restart the app after changing environment variables
+
+BACKUP
+Regularly back up storage/database.json and storage/uploads/.
