@@ -13,6 +13,7 @@ export async function GET() {
       rating:p.rating,
       stock:Number(p.stock_quantity)>0,
       stockQuantity:p.stock_quantity,
+      isDigital:Boolean(p.is_digital),
       image:p.image,
       images:[p.image,p.image_2,p.image_3].filter(Boolean),
       videoUrl:p.video_url||undefined,

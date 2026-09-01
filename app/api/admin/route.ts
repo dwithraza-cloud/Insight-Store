@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { can, currentStaff, ensureStaffSchema, ownsProduct, type StaffUser } from "../staff-auth";
 
 type AdminEntity = "products" | "orders" | "payments" | "customers" | "categories" | "brands" | "coupons" | "blog" | "messages" | "newsletter" | "settings";
 
@@ -6,15 +7,6 @@ const allowed = new Set<AdminEntity>(["products","orders","payments","customers"
 
 function json(data: unknown, status = 200) {
   return Response.json(data, { status, headers: { "cache-control": "no-store" } });
-}
-
-function adminIdentity(request: Request) {
-  const id = request.headers.get("oai-authenticated-user-id");
-  const email = request.headers.get("oai-authenticated-user-email");
-  const host = new URL(request.url).hostname;
-  if (id && email) return { id, email };
-  if (host === "localhost" || host === "127.0.0.1") return { id: "local-admin", email: "admin@localhost" };
-  return null;
 }
 
 async function ensureSchema() {
@@ -50,6 +42,7 @@ async function ensureSchema() {
       rating REAL NOT NULL DEFAULT 5,
       status TEXT NOT NULL DEFAULT 'active',
       featured INTEGER NOT NULL DEFAULT 0,
+      is_digital INTEGER NOT NULL DEFAULT 0,
       color TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -101,21 +94,21 @@ async function ensureSchema() {
     "ALTER TABLE catalog_products ADD COLUMN image_2 TEXT",
     "ALTER TABLE catalog_products ADD COLUMN image_3 TEXT",
     "ALTER TABLE catalog_products ADD COLUMN video_url TEXT",
+    "ALTER TABLE catalog_products ADD COLUMN owner_user_id TEXT",
+    "ALTER TABLE catalog_products ADD COLUMN created_by_email TEXT",
+    "ALTER TABLE catalog_products ADD COLUMN is_digital INTEGER NOT NULL DEFAULT 0",
   ]) { try { await db.prepare(statement).run(); } catch {} }
+  await ensureStaffSchema();
 }
 
 async function requireAdmin(request: Request) {
-  const identity = adminIdentity(request);
-  if (!identity) return null;
   await ensureSchema();
-  const now = Date.now();
-  const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM admin_users").first<{count:number}>();
-  if (!count?.count) {
-    await env.DB.prepare("INSERT INTO admin_users (authenticated_user_id,email,name,role,active,created_at,updated_at) VALUES (?,?,?,'super_admin',1,?,?)")
-      .bind(identity.id, identity.email, identity.email.split("@")[0], now, now).run();
-  }
-  const user = await env.DB.prepare("SELECT * FROM admin_users WHERE authenticated_user_id=? AND active=1").bind(identity.id).first<Record<string,unknown>>();
-  return user ? { ...identity, ...user } : null;
+  return currentStaff(request);
+}
+
+function allowedSection(user:StaffUser,entity:AdminEntity){
+  if(user.role==="super_admin")return true;
+  return entity==="products";
 }
 
 async function audit(userId: string, action: string, entity: string, id: unknown, summary: string, metadata?: unknown) {
@@ -147,6 +140,7 @@ function cleanProduct(input: Record<string, unknown>) {
     rating: Number(input.rating || 5),
     status: ["active","draft","archived"].includes(String(input.status)) ? String(input.status) : "active",
     featured: input.featured ? 1 : 0,
+    is_digital: input.is_digital || input.isDigital ? 1 : 0,
     color: String(input.color || "").trim() || null,
   };
 }
@@ -157,11 +151,17 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const entity = url.searchParams.get("entity") as AdminEntity;
   if (!allowed.has(entity)) return json({ error: "Unknown admin section" }, 400);
+  if (!allowedSection(admin,entity)) return json({ error: "Your editor account does not have access to this section." }, 403);
   const q = (url.searchParams.get("q") || "").trim();
   if (entity === "products") {
+    const own=admin.role==="editor";
     const rows = q
-      ? await env.DB.prepare("SELECT * FROM catalog_products WHERE title LIKE ? OR sku LIKE ? OR category LIKE ? ORDER BY updated_at DESC LIMIT 250").bind(`%${q}%`,`%${q}%`,`%${q}%`).all()
-      : await env.DB.prepare("SELECT * FROM catalog_products ORDER BY updated_at DESC LIMIT 250").all();
+      ? own
+        ? await env.DB.prepare("SELECT * FROM catalog_products WHERE owner_user_id=? AND (title LIKE ? OR sku LIKE ? OR category LIKE ?) ORDER BY updated_at DESC LIMIT 250").bind(admin.id,`%${q}%`,`%${q}%`,`%${q}%`).all()
+        : await env.DB.prepare("SELECT * FROM catalog_products WHERE title LIKE ? OR sku LIKE ? OR category LIKE ? ORDER BY updated_at DESC LIMIT 250").bind(`%${q}%`,`%${q}%`,`%${q}%`).all()
+      : own
+        ? await env.DB.prepare("SELECT * FROM catalog_products WHERE owner_user_id=? ORDER BY updated_at DESC LIMIT 250").bind(admin.id).all()
+        : await env.DB.prepare("SELECT * FROM catalog_products ORDER BY updated_at DESC LIMIT 250").all();
     return json({ items: rows.results, admin });
   }
   if (entity === "orders" || entity === "payments") {
@@ -197,52 +197,52 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const entity = url.searchParams.get("entity") as AdminEntity;
   if (!allowed.has(entity)) return json({ error: "Unknown admin section" }, 400);
+  if (!allowedSection(admin,entity)) return json({ error: "Your editor account does not have access to this section." }, 403);
   const body = await request.json() as Record<string, any>;
   const now = Date.now();
   try {
     if (entity === "products" && body.action === "seed") {
-      const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM catalog_products").first<{count:number}>();
-      if (!count?.count && Array.isArray(body.items)) {
+      if (admin.role!=="super_admin") return json({ok:true});
+      if (Array.isArray(body.items)) {
         for (const raw of body.items) {
-          const p = cleanProduct({ ...raw, source_id: raw.id, stock_quantity: raw.stock ? 10 : 0, old_price: raw.oldPrice });
+          const p = cleanProduct({
+            ...raw,
+            source_id: raw.id,
+            stock_quantity: raw.stockQuantity ?? raw.stock_quantity ?? (raw.stock ? 10 : 0),
+            old_price: raw.oldPrice,
+            image_2: raw.image_2 || raw.images?.[1],
+            image_3: raw.image_3 || raw.images?.[2],
+          });
           await env.DB.prepare(`INSERT OR IGNORE INTO catalog_products
-            (source_id,title,slug,sku,category,brand,description,price,old_price,stock_quantity,image,image_2,image_3,video_url,badge,rating,status,featured,color,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-            .bind(p.source_id,p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.color,now,now).run();
+            (source_id,title,slug,sku,category,brand,description,price,old_price,stock_quantity,image,image_2,image_3,video_url,badge,rating,status,featured,is_digital,color,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .bind(p.source_id,p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.is_digital,p.color,now,now).run();
         }
       }
       return json({ ok: true }, 201);
     }
     if (entity === "products") {
+      if (!can(admin,"create_products")) return json({error:"You do not have permission to create products."},403);
       const p = cleanProduct(body);
       const result = await env.DB.prepare(`INSERT INTO catalog_products
-        (source_id,title,slug,sku,category,brand,description,price,old_price,stock_quantity,image,image_2,image_3,video_url,badge,rating,status,featured,color,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(p.source_id,p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.color,now,now).run();
-      await audit(String(admin.authenticated_user_id), "create", entity, result.meta.last_row_id, `Created product ${p.title}`);
+        (source_id,title,slug,sku,category,brand,description,price,old_price,stock_quantity,image,image_2,image_3,video_url,badge,rating,status,featured,is_digital,color,owner_user_id,created_by_email,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(p.source_id,p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.is_digital,p.color,admin.id,admin.email,now,now).run();
+      await audit(String(admin.id), "create", entity, result.meta.last_row_id, `Created product ${p.title}`);
       return json({ id: result.meta.last_row_id }, 201);
-    }
-    if (entity === "orders" || entity === "payments") {
-      const paymentStatus=String(body.payment_status||"");
-      if(!["Verification Pending","Paid","Payment Rejected"].includes(paymentStatus))throw new Error("Invalid payment status.");
-      const orderStatus=paymentStatus==="Paid"?"Order Confirmed":paymentStatus==="Payment Rejected"?"Payment Pending":"Payment Pending";
-      await env.DB.prepare("UPDATE store_orders SET payment_status=?,order_status=?,admin_note=?,verified_by=?,verified_at=?,updated_at=? WHERE id=?")
-        .bind(paymentStatus,orderStatus,String(body.admin_note||"").slice(0,1000),String(admin.authenticated_user_id),Date.now(),now,id).run();
-      await audit(String(admin.authenticated_user_id),paymentStatus==="Paid"?"approve":"reject","payment",id,`${paymentStatus} for order ${id}`);
-      return json({ok:true});
     }
     if (entity === "settings") {
       if (!body.key) throw new Error("Setting key is required.");
       await env.DB.prepare("INSERT INTO store_settings (key,value_json,updated_by,updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-        .bind(String(body.key),JSON.stringify(body.value ?? body),String(admin.authenticated_user_id),now).run();
-      await audit(String(admin.authenticated_user_id),"update",entity,body.key,`Updated setting ${body.key}`);
+        .bind(String(body.key),JSON.stringify(body.value ?? body),String(admin.id),now).run();
+      await audit(String(admin.id),"update",entity,body.key,`Updated setting ${body.key}`);
       return json({ ok:true },201);
     }
     const title = String(body.title || body.name || body.code || body.email || "Untitled").trim();
     const status = String(body.status || "active");
     const result = await env.DB.prepare("INSERT INTO admin_records (entity,title,status,data_json,created_at,updated_at) VALUES (?,?,?,?,?,?)")
       .bind(entity,title,status,JSON.stringify(body),now,now).run();
-    await audit(String(admin.authenticated_user_id),"create",entity,result.meta.last_row_id,`Created ${entity}: ${title}`);
+    await audit(String(admin.id),"create",entity,result.meta.last_row_id,`Created ${entity}: ${title}`);
     return json({ id: result.meta.last_row_id },201);
   } catch (error:any) {
     const duplicate = String(error?.message||"").includes("UNIQUE");
@@ -257,25 +257,39 @@ export async function PATCH(request: Request) {
   const entity = url.searchParams.get("entity") as AdminEntity;
   const id = url.searchParams.get("id");
   if (!id || !allowed.has(entity)) return json({ error: "Entity and id are required" },400);
+  if (!allowedSection(admin,entity)) return json({ error: "Your editor account does not have access to this section." }, 403);
   const body = await request.json() as Record<string,any>;
   const now = Date.now();
   try {
     if (entity === "products") {
+      if (!can(admin,"edit_own_products")) return json({error:"You do not have permission to edit products."},403);
+      const existing=await env.DB.prepare("SELECT * FROM catalog_products WHERE id=?").bind(id).first<any>();
+      if(!existing)return json({error:"Product not found."},404);
+      if(!ownsProduct(admin,existing))return json({error:"Editors can only edit products they uploaded."},403);
       const p = cleanProduct(body);
-      await env.DB.prepare(`UPDATE catalog_products SET title=?,slug=?,sku=?,category=?,brand=?,description=?,price=?,old_price=?,stock_quantity=?,image=?,image_2=?,image_3=?,video_url=?,badge=?,rating=?,status=?,featured=?,color=?,updated_at=? WHERE id=?`)
-        .bind(p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.color,now,id).run();
-      await audit(String(admin.authenticated_user_id),"update",entity,id,`Updated product ${p.title}`);
+      await env.DB.prepare(`UPDATE catalog_products SET title=?,slug=?,sku=?,category=?,brand=?,description=?,price=?,old_price=?,stock_quantity=?,image=?,image_2=?,image_3=?,video_url=?,badge=?,rating=?,status=?,featured=?,is_digital=?,color=?,updated_at=? WHERE id=?`)
+        .bind(p.title,p.slug,p.sku,p.category,p.brand,p.description,p.price,p.old_price,p.stock_quantity,p.image,p.image_2,p.image_3,p.video_url,p.badge,p.rating,p.status,p.featured,p.is_digital,p.color,now,id).run();
+      await audit(String(admin.id),"update",entity,id,`Updated product ${p.title}`);
       return json({ ok:true });
+    }
+    if (entity === "orders" || entity === "payments") {
+      const paymentStatus=String(body.payment_status||"");
+      if(!["Verification Pending","Paid","Payment Rejected"].includes(paymentStatus))throw new Error("Invalid payment status.");
+      const orderStatus=paymentStatus==="Paid"?"Order Confirmed":"Payment Pending";
+      await env.DB.prepare("UPDATE store_orders SET payment_status=?,order_status=?,admin_note=?,verified_by=?,verified_at=?,updated_at=? WHERE id=?")
+        .bind(paymentStatus,orderStatus,String(body.admin_note||"").slice(0,1000),String(admin.id),Date.now(),now,id).run();
+      await audit(String(admin.id),paymentStatus==="Paid"?"approve":"reject","payment",id,`${paymentStatus} for order ${id}`);
+      return json({ok:true});
     }
     if (entity === "messages") {
       await env.DB.prepare("UPDATE contact_messages SET status=? WHERE id=?").bind(String(body.status||"Read"),id).run();
-      await audit(String(admin.authenticated_user_id),"update",entity,id,`Updated message status`);
+      await audit(String(admin.id),"update",entity,id,`Updated message status`);
       return json({ok:true});
     }
     const title = String(body.title || body.name || body.code || body.email || "Untitled").trim();
     await env.DB.prepare("UPDATE admin_records SET title=?,status=?,data_json=?,updated_at=? WHERE id=? AND entity=?")
       .bind(title,String(body.status||"active"),JSON.stringify(body),now,id,entity).run();
-    await audit(String(admin.authenticated_user_id),"update",entity,id,`Updated ${entity}: ${title}`);
+    await audit(String(admin.id),"update",entity,id,`Updated ${entity}: ${title}`);
     return json({ok:true});
   } catch(error:any) {
     return json({error:error?.message||"Unable to update record."},400);
@@ -289,11 +303,18 @@ export async function DELETE(request: Request) {
   const entity = url.searchParams.get("entity") as AdminEntity;
   const id = url.searchParams.get("id");
   if (!id || !allowed.has(entity)) return json({ error: "Entity and id are required" },400);
-  if (entity === "products") await env.DB.prepare("DELETE FROM catalog_products WHERE id=?").bind(id).run();
+  if (!allowedSection(admin,entity)) return json({ error: "Your editor account does not have access to this section." }, 403);
+  if (entity === "products") {
+    if (!can(admin,"delete_own_products")) return json({error:"You do not have permission to delete products."},403);
+    const existing=await env.DB.prepare("SELECT * FROM catalog_products WHERE id=?").bind(id).first<any>();
+    if(!existing)return json({error:"Product not found."},404);
+    if(!ownsProduct(admin,existing))return json({error:"Editors can only delete products they uploaded."},403);
+    await env.DB.prepare("DELETE FROM catalog_products WHERE id=?").bind(id).run();
+  }
   else if (entity === "orders" || entity === "payments") return json({error:"Orders and payment records cannot be deleted."},405);
   else if (entity === "messages") await env.DB.prepare("DELETE FROM contact_messages WHERE id=?").bind(id).run();
   else if (entity === "newsletter") await env.DB.prepare("DELETE FROM newsletter_subscribers WHERE id=?").bind(id).run();
   else await env.DB.prepare("DELETE FROM admin_records WHERE id=? AND entity=?").bind(id,entity).run();
-  await audit(String(admin.authenticated_user_id),"delete",entity,id,`Deleted ${entity} record`);
+  await audit(String(admin.id),"delete",entity,id,`Deleted ${entity} record`);
   return json({ok:true});
 }

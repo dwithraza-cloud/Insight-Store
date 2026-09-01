@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { can, currentStaff } from "../staff-auth";
 
 const imageTypes = new Set(["image/jpeg","image/png","image/webp","image/svg+xml"]);
 const proofTypes = new Set(["image/jpeg","image/png","image/webp"]);
@@ -24,7 +25,8 @@ export async function POST(request:Request){
   const kind=String(form.get("kind")||"product");
   if(!(file instanceof File)) return Response.json({error:"Choose a file to upload."},{status:400});
   const isProof=kind==="payment-proof";
-  if(!isProof && !identity(request)) return Response.json({error:"Admin access required."},{status:403});
+  const staff=isProof?null:await currentStaff(request);
+  if(!isProof && (!staff||!can(staff,"upload_media"))) return Response.json({error:"Staff media-upload permission required."},{status:403});
   const allowed=isProof?proofTypes:new Set([...imageTypes,...videoTypes]);
   const max=videoTypes.has(file.type)?50*1024*1024:5*1024*1024;
   if(!allowed.has(file.type)) return Response.json({error:"Unsupported file format."},{status:415});
@@ -35,23 +37,26 @@ export async function POST(request:Request){
   const now=Date.now();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, object_key TEXT NOT NULL UNIQUE, original_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, width INTEGER, height INTEGER, kind TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL)`).run();
   await env.DB.prepare("INSERT INTO media_assets (id,object_key,original_name,mime_type,size,kind,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(id,key,file.name,file.type,file.size,kind,identity(request),now).run();
+    .bind(id,key,file.name,file.type,file.size,kind,staff?.id||null,now).run();
   return Response.json({id,url:`/api/media/${key}`,name:file.name,type:file.type,size:file.size,created_at:now},{status:201});
 }
 
 export async function GET(request:Request){
-  if(!identity(request)) return Response.json({error:"Admin access required."},{status:403});
+  const staff=await currentStaff(request);if(!staff) return Response.json({error:"Staff access required."},{status:403});
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, object_key TEXT NOT NULL UNIQUE, original_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, width INTEGER, height INTEGER, kind TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL)`).run();
   const q=new URL(request.url).searchParams.get("q")||"";
-  const rows=await env.DB.prepare("SELECT * FROM media_assets WHERE original_name LIKE ? ORDER BY created_at DESC LIMIT 250").bind(`%${q}%`).all();
+  const rows=staff.role==="super_admin"
+    ? await env.DB.prepare("SELECT * FROM media_assets WHERE original_name LIKE ? ORDER BY created_at DESC LIMIT 250").bind(`%${q}%`).all()
+    : await env.DB.prepare("SELECT * FROM media_assets WHERE created_by=? AND original_name LIKE ? ORDER BY created_at DESC LIMIT 250").bind(staff.id,`%${q}%`).all();
   return Response.json({items:rows.results.map((x:any)=>({...x,url:`/api/media/${x.object_key}`}))},{headers:{"cache-control":"no-store"}});
 }
 
 export async function DELETE(request:Request){
-  if(!identity(request)) return Response.json({error:"Admin access required."},{status:403});
+  const staff=await currentStaff(request);if(!staff) return Response.json({error:"Staff access required."},{status:403});
   const id=new URL(request.url).searchParams.get("id");
-  const row=await env.DB.prepare("SELECT object_key FROM media_assets WHERE id=?").bind(id).first<any>();
+  const row=await env.DB.prepare("SELECT object_key,created_by FROM media_assets WHERE id=?").bind(id).first<any>();
   if(!row)return Response.json({error:"Media not found."},{status:404});
+  if(staff.role!=="super_admin"&&row.created_by!==staff.id)return Response.json({error:"Editors can only delete media they uploaded."},{status:403});
   await (env as any).MEDIA.delete(row.object_key);
   await env.DB.prepare("DELETE FROM media_assets WHERE id=?").bind(id).run();
   return Response.json({ok:true});

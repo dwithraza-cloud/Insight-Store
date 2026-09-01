@@ -29,6 +29,7 @@ yarn-error.log*
 .pnpm-debug.log*
 /.pnpm-store/
 /dev-server*.log
+/.dev-server*.log
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -41,3 +42,7 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# Hostinger runtime data (created automatically on first start)
+/hostinger/storage/database.json
+/hostinger/storage/uploads/

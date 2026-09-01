@@ -1,4 +1,4 @@
-INSIGHT STORE - HOSTINGER NODE.JS SETUP
+INSIGHT STORE v1.8.1 - HOSTINGER NODE.JS SETUP
 
 1. Extract the ZIP directly into your Hostinger Node.js application root.
    package.json and server.mjs must be at the application root, not inside an extra folder.
@@ -11,7 +11,8 @@ INSIGHT STORE - HOSTINGER NODE.JS SETUP
 4. No build command is required. This package has no third-party runtime
    dependencies. Hostinger may still run npm install; it will finish quickly.
 
-5. Add environment variable:
+5. Add environment variables:
+   ADMIN_EMAIL = your private admin email
    ADMIN_PASSWORD = a strong private password
 
    Do not set PORT manually. Hostinger supplies it automatically.
@@ -23,10 +24,15 @@ INSIGHT STORE - HOSTINGER NODE.JS SETUP
    /api/health
    It should return {"ok":true,...}
 
-8. Admin URL:
+8. Staff login URL:
+   /staff-login
+   Log in with ADMIN_EMAIL and ADMIN_PASSWORD. The super admin can then open
+   Team Access, invite editors, disable accounts, and manage permissions.
+
+9. Admin dashboard URL:
    /admin
-   The browser will ask for Basic Authentication. Username may be anything;
-   use ADMIN_PASSWORD as the password.
+   Editors only see their own products and media. They cannot access orders,
+   payments, customers, settings, or products uploaded by another account.
 
 503 PREVENTION CHECKLIST
 - Node.js 22+
